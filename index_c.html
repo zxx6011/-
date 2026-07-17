@@ -1,0 +1,930 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>生日快乐 - 魔法粒子 v4.5 (柔光护眼版)</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Dancing+Script:wght@600;700&family=Noto+Serif+SC:wght@500&display=swap" rel="stylesheet">
+    
+    <!-- MediaPipe 辅助库 -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    
+    <!-- MediaPipe 核心库 -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/hands.js" crossorigin="anonymous"></script>
+
+    <style>
+        html, body {
+            margin: 0; padding: 0; overflow: hidden;
+            background: radial-gradient(circle at top, #1b1630 0, #05030a 60%, #000 100%);
+            color: #fff;
+            font-family: system-ui, -apple-system, sans-serif;
+            user-select: none; -webkit-user-select: none;
+        }
+        body { height: 100vh; width: 100vw; position: relative; }
+        canvas { display: block; }
+        
+        #app-root { position: absolute; inset: 0; display: flex; flex-direction: column; pointer-events: none; }
+        #top-status-bar, #center-instruction { pointer-events: none; }
+        #center-instruction h2 { font-family: "Dancing Script", "Noto Serif SC", system-ui; }
+        
+        #blow-meter-container { transition: opacity 0.4s ease; }
+        #blow-meter-bar { transition: width 0.1s linear; }
+
+        #surprise-layer {
+            pointer-events: none;
+            transition: transform 0.6s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.6s ease;
+            transform-origin: bottom center;
+            transform: translateY(60px) scale(0.96); opacity: 0;
+        }
+        #surprise-layer.active { pointer-events: auto; transform: translateY(0) scale(1); opacity: 1; }
+
+        .glass-panel {
+            background: radial-gradient(circle at top left, rgba(255, 255, 255, 0.14), rgba(15, 23, 42, 0.9));
+            backdrop-filter: blur(14px);
+            border-radius: 1.5rem;
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            box-shadow: 0 24px 80px rgba(15, 23, 42, 0.8), 0 0 0 1px rgba(148, 163, 184, 0.3);
+        }
+
+        #camera-preview-box {
+            position: fixed;
+            top: 5rem; 
+            right: 1rem;
+            width: 140px;
+            z-index: 40;
+            transition: opacity 0.5s ease, transform 0.5s ease;
+            pointer-events: auto; 
+        }
+        @media (min-width: 640px) {
+            #camera-preview-box { width: 180px; right: 2rem; }
+        }
+        #camera-preview-box.hidden-fade {
+            opacity: 0;
+            pointer-events: none;
+            transform: scale(0.8);
+        }
+
+        .pop-in { animation: pop-in 0.7s cubic-bezier(0.16,1,0.3,1) forwards; }
+        @keyframes pop-in { 0% { opacity: 0; transform: translateY(12px) scale(0.96); filter: blur(4px); } 100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); } }
+        
+        .safe-click-area { position: relative; pointer-events: auto; touch-action: manipulation; }
+        .frosted-topbar { backdrop-filter: blur(12px); background: linear-gradient(to right, rgba(15,23,42,0.92), rgba(15,23,42,0.75), rgba(15,23,42,0.92)); border-bottom: 1px solid rgba(148,163,184,0.5); }
+        
+        @keyframes pulse-dot { 0%, 100% { transform: scale(1); opacity: 0.8; } 50% { transform: scale(1.35); opacity: 1; } }
+        .status-dot-anim { animation: pulse-dot 1.2s infinite; }
+        
+        @keyframes glow-soft { 0%, 100% { box-shadow: 0 0 36px rgba(236, 72, 153, 0.45); } 50% { box-shadow: 0 0 64px rgba(244, 114, 182, 0.8); } }
+        .btn-glow-soft { animation: glow-soft 2.2s ease-in-out infinite; }
+
+        .border-rainbow::before {
+            content: ""; position: absolute; inset: -1px; border-radius: inherit; padding: 1px;
+            background: linear-gradient(120deg, #f472b6, #c4b5fd, #38bdf8, #4ade80);
+            -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+            -webkit-mask-composite: xor; mask-composite: exclude; opacity: 0.9;
+        }
+
+        .text-glow { text-shadow: 0 0 18px rgba(244, 114, 182, 0.9), 0 0 32px rgba(244, 114, 182, 0.7); }
+        .font-handwriting { font-family: "Dancing Script", system-ui; }
+
+        @media (max-width: 640px) {
+            #center-instruction h2 { font-size: 2.75rem; }
+            #center-instruction p { font-size: 0.9rem; letter-spacing: 0.35em; }
+            #start-overlay .glass-panel { padding: 1.75rem; }
+        }
+
+        .flip-container { perspective: 1200px; width: 100%; max-width: 320px; margin: 0 auto 1.5rem; }
+        .flip-inner { position: relative; width: 100%; padding-top: 62.5%; transform-style: preserve-3d; transition: transform 0.8s cubic-bezier(0.19, 1, 0.22, 1); cursor: pointer; }
+        .flip-inner.flipped { transform: rotateY(180deg); }
+        .flip-face { position: absolute; inset: 0; backface-visibility: hidden; border-radius: 1rem; overflow: hidden; }
+        .flip-back { transform: rotateY(180deg); }
+
+        .text-particle { position: absolute; width: 6px; height: 6px; border-radius: 9999px; background: radial-gradient(circle, #ffffff, rgba(255,105,180,0)); pointer-events: none; animation: textParticleUp 0.7s ease-out forwards; }
+        @keyframes textParticleUp { 0% { transform: translateY(0) scale(1); opacity: 1; } 100% { transform: translateY(-18px) scale(0.4); opacity: 0; } }
+        #signature-canvas { width: 100%; height: 80px; display: block; margin: 0.5rem 0 0.25rem; }
+
+        #energy-ring { position: absolute; top: 50%; left: 50%; width: 60vmin; height: 60vmin; transform: translate(-50%, -50%) scale(0.9); opacity: 0; pointer-events: none; transition: opacity 0.3s ease, transform 0.3s ease; z-index: 6; }
+        #energy-ring.active { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+        #energy-ring circle.bg { stroke: rgba(255, 105, 180, 0.25); }
+        #energy-ring circle.fg { stroke: #ff69b4; filter: drop-shadow(0 0 12px rgba(255,105,180,0.9)); }
+    </style>
+</head>
+<body>
+
+    <audio id="bgm" loop>
+        <source src="https://upload.wikimedia.org/wikipedia/commons/6/6e/Happy_Birthday_to_You_-_Instrumental.ogg" type="audio/ogg">
+    </audio>
+
+    <video class="input_video" playsinline style="display:none"></video>
+    <div id="canvas-container"></div>
+    <canvas id="fx-canvas" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:5"></canvas>
+
+    <svg id="energy-ring" viewBox="0 0 240 240">
+        <circle class="bg" cx="120" cy="120" r="110" stroke-width="4" fill="none"></circle>
+        <circle id="energy-ring-fg" class="fg" cx="120" cy="120" r="110" stroke-width="6" fill="none" stroke-linecap="round"></circle>
+    </svg>
+
+    <div id="camera-preview-box" class="glass-panel p-1.5 flex flex-col gap-1 border-rainbow hidden-fade">
+        <div class="relative w-full aspect-[4/3] bg-black/60 rounded-lg overflow-hidden border border-white/10">
+            <canvas id="output_canvas" class="w-full h-full object-cover transform -scale-x-100"></canvas>
+            <div id="cam-indicator" class="absolute top-2 right-2 w-2.5 h-2.5 rounded-full bg-red-500 shadow-md transition-colors duration-300"></div>
+            <div id="cam-overlay-text" class="absolute inset-0 flex items-center justify-center bg-black/40 text-[10px] text-white/80 pointer-events-none hidden">
+                Camera Active
+            </div>
+        </div>
+        <div class="flex justify-between items-center px-1">
+            <span class="text-[9px] text-slate-400 uppercase tracking-widest">Hand Vision</span>
+            <span class="text-[9px] text-emerald-400" id="cam-status-text">WAITING...</span>
+        </div>
+    </div>
+
+    <div id="app-root" class="relative z-10">
+        <header id="top-status-bar" class="frosted-topbar flex items-center justify-between px-5 sm:px-8 py-3 border-b border-slate-700/60">
+            <div class="flex items-center gap-3">
+                <div class="flex items-center gap-2">
+                    <span id="status-dot" class="status-dot-anim inline-block w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.9)]"></span>
+                    <div>
+                        <p id="status-text" class="text-[10px] sm:text-xs text-slate-200 tracking-[0.18em] uppercase">READY</p>
+                    </div>
+                </div>
+            </div>
+            <div class="flex items-center gap-3 text-[10px] text-slate-300">
+                <button id="music-btn" class="safe-click-area flex items-center gap-1 px-2 py-1 rounded-full border border-slate-500/70 bg-slate-900/60 hover:bg-slate-800/80 transition text-[10px] tracking-[0.18em] uppercase">
+                    <span class="w-1.5 h-1.5 rounded-full bg-pink-400 shadow-[0_0_8px_rgba(244,114,182,0.9)]"></span> BGM
+                </button>
+            </div>
+        </header>
+
+        <main class="flex-1 flex flex-col items-center justify-center px-4 pb-40 sm:pb-48 relative">
+            <section id="center-instruction" class="text-center select-none">
+                <h2 id="instruction-text" class="text-5xl sm:text-6xl md:text-7xl font-handwriting text-glow mb-3">Raise your hand</h2>
+                <p id="sub-instruction" class="tracking-[0.35em] text-xs sm:text-sm text-slate-200/90 uppercase">let the magic birthday cake appear</p>
+            </section>
+
+            <section class="mt-10 flex flex-col items-center gap-2">
+                <div id="blow-meter-container" class="safe-click-area w-64 max-w-[80vw] h-2 rounded-full bg-slate-700/80 overflow-hidden opacity-0">
+                    <div id="blow-meter-bar" class="h-full w-0 bg-gradient-to-r from-emerald-400 via-teal-400 to-sky-400 shadow-[0_0_18px_rgba(56,189,248,0.85)]"></div>
+                </div>
+                <p id="blow-hint" class="text-[11px] text-slate-200/90 tracking-[0.22em] uppercase opacity-0">blow the candles · or long press screen</p>
+            </section>
+        </main>
+
+        <section id="surprise-layer" class="fixed bottom-0 left-0 right-0 flex flex-col items-center pb-6 sm:pb-8 px-4">
+            <div class="safe-click-area w-full max-w-md glass-panel border-rainbow px-1 py-1">
+                <div class="bg-black/70 rounded-[1.3rem] px-5 py-4 sm:px-6 sm:py-5 flex flex-col gap-4">
+                    <div id="card-step-1" class="space-y-3">
+                        <div class="flex items-center justify-between gap-3">
+                            <p class="text-xs text-slate-300/90 tracking-[0.18em] uppercase">surprise unlocked</p>
+                            <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-400/40 text-[11px] text-emerald-200">
+                                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.9)]"></span> new year · new wish
+                            </span>
+                        </div>
+                        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                            <div class="text-left space-y-1">
+                                <p class="text-sm text-slate-100/90">
+                                    <span class="text-pink-300 font-handwriting text-lg align-middle mr-1.5">Hey</span>
+                                    魔法仪式已完成 ✨
+                                </p>
+                                <p class="text-xs text-slate-300/80 leading-relaxed">
+                                    还有<span class="text-pink-300 mx-1">一份只属于你的惊喜</span>等待开启。
+                                </p>
+                            </div>
+                            <button id="reveal-btn" class="safe-click-area btn-glow-soft inline-flex items-center justify-center px-4 py-2 rounded-full bg-gradient-to-r from-pink-500 via-fuchsia-500 to-sky-500 text-xs font-medium tracking-[0.18em] uppercase shadow-lg hover:shadow-xl hover:scale-[1.02] transition">
+                                <span class="mr-1.5">OPEN</span> <span class="text-lg">🎁</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="flex items-center justify-between text-xs text-slate-400 pt-1">
+                        <span class="flex items-center gap-1">
+                            <span class="inline-block w-1 h-1 rounded-full bg-slate-500"></span>
+                            <span class="inline-block w-1 h-1 rounded-full bg-slate-500"></span>
+                            <span class="inline-block w-1 h-1 rounded-full bg-slate-700"></span>
+                        </span>
+                        <button id="next-surprise-btn" class="safe-click-area text-[11px] text-slate-200 hover:text-pink-200 transition flex items-center gap-1">
+                            <span>More</span> <span class="text-[15px]">→</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="card-step-2" class="hidden max-w-sm md:max-w-md w-full mx-6 glass-panel p-1 bg-gradient-to-br from-purple-500/40 to-blue-600/40 border border-white/30 shadow-2xl pop-in">
+                <div class="bg-black/60 rounded-[1.2rem] p-8 backdrop-blur-md text-center">
+                    <div class="flip-container">
+                        <div id="wish-card-3d" class="flip-inner">
+                            <div class="flip-face flip-front bg-gradient-to-br from-pink-500/40 to-purple-500/50 flex flex-col items-center justify-center">
+                                <div class="text-5xl mb-2">💌</div>
+                                <div class="text-pink-100 text-lg font-handwriting">点我翻面</div>
+                            </div>
+                            <div class="flip-face flip-back bg-black">
+                                <img id="user-photo" src="https://images.unsplash.com/photo-1494790108377-be9c29b29330?q=80&w=600&auto=format&fit=crop" alt="Photo" class="w-full h-full object-cover">
+                            </div>
+                        </div>
+                    </div>
+                    <h3 class="text-2xl font-bold text-pink-300 mb-4 font-handwriting">致最特别的你</h3>
+                    <div id="blessing-text" class="text-left text-gray-200 font-light leading-7 text-sm md:text-base border-l-2 border-pink-500/50 pl-4 mb-3 relative"></div>
+                    <canvas id="signature-canvas"></canvas>
+                    <button id="close-card-btn" class="safe-click-area mt-3 px-8 py-2 rounded-full border border-white/30 text-gray-300 hover:bg-white/10 hover:text-white transition text-sm">收起卡片</button>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <div id="start-overlay" class="fixed inset-0 z-20 flex items-center justify-center bg-gradient-to-br from-slate-900/95 via-slate-950/98 to-black">
+        <div class="safe-click-area max-w-md w-[90%] glass-panel border-rainbow px-6 py-6 sm:px-7 sm:py-7">
+            <div class="flex items-center justify-between mb-4">
+                <div>
+                    <p class="text-xs text-slate-300 tracking-[0.25em] uppercase">birthday ritual</p>
+                    <h1 class="font-handwriting text-3xl sm:text-4xl text-glow mt-1">Make a wish</h1>
+                </div>
+                <span class="text-3xl">🎂</span>
+            </div>
+            <p class="text-sm text-slate-200/90 leading-relaxed mb-4">
+                打开摄像头 &amp; 麦克风，<span class="text-pink-300">举起你的手</span>，让魔法在你指尖出现。<br>
+                <span class="text-xs text-slate-400 mt-2 block">(右上角有摄像头画面可供检查，若识别困难可点击屏幕辅助触发)</span>
+            </p>
+            <button id="start-btn" class="w-full safe-click-area btn-glow-soft mt-2 inline-flex items-center justify-center px-4 py-2.5 rounded-full bg-gradient-to-r from-pink-500 via-fuchsia-500 to-sky-500 text-xs sm:text-sm font-medium tracking-[0.18em] uppercase shadow-lg hover:shadow-xl hover:scale-[1.02] transition">
+                <span class="mr-2">开始仪式</span> <span>✨</span>
+            </button>
+            <p id="loading-text" class="mt-3 text-[11px] text-slate-400 text-center hidden">Initializing Magic Engine...</p>
+        </div>
+    </div>
+
+    <script>
+        const CONFIG = {
+            particleCount: 4500,
+            color: 0xff69b4,
+            blowThreshold: 20,
+            physics: { friction: 0.94, springStrength: 0.08, wanderStrength: 0.05 }
+        };
+
+        const STATE = { IDLE: 0, GATHERING: 0.5, COUNTDOWN: 1, CAKE: 2, BLOWING: 3, CELEBRATION: 4 };
+        const ENERGY_CIRCUMFERENCE = 2 * Math.PI * 110;
+        const blessingContent = "生日快乐！\n愿你遍历山河，觉得人间值得。\n愿你眼里的星星永远发亮。\n新的一岁，继续闪闪发光！";
+
+        let currentState = STATE.IDLE;
+        let particlesData = [];
+        let scene, camera, renderer, particleSystem;
+        let time = 0;
+        let shapeCache = {};
+        let blowProgress = 0;
+        let audioContext, analyser;
+        let isBlowing = false;
+        const bgm = document.getElementById('bgm');
+
+        let handDetected = false;
+        let handPosition = new THREE.Vector3(0,0,0);
+        let handHoldStart = null;
+        let touchBlowInterval = null;
+        let fxCtx, fxWidth, fxHeight;
+        let fireworks = [];
+        let magicCircle = { x: null, y: null, active: false, angle: 0 };
+
+        const uiElements = {
+            statusText: document.getElementById('status-text'),
+            statusDot: document.getElementById('status-dot'),
+            mainText: document.getElementById('instruction-text'),
+            subText: document.getElementById('sub-instruction'),
+            blowMeter: document.getElementById('blow-meter-container'),
+            blowBar: document.getElementById('blow-meter-bar'),
+            blowHint: document.getElementById('blow-hint'),
+            surpriseLayer: document.getElementById('surprise-layer'),
+            revealBtn: document.getElementById('reveal-btn'),
+            card1: document.getElementById('card-step-1'),
+            card2: document.getElementById('card-step-2'),
+            nextBtn: document.getElementById('next-surprise-btn'),
+            closeBtn: document.getElementById('close-card-btn'),
+            fxCanvas: document.getElementById('fx-canvas'),
+            energyRing: document.getElementById('energy-ring'),
+            energyRingFg: document.getElementById('energy-ring-fg'),
+            blessingText: document.getElementById('blessing-text'),
+            signatureCanvas: document.getElementById('signature-canvas'),
+            wishCard3d: document.getElementById('wish-card-3d'),
+            cameraPreview: document.getElementById('camera-preview-box'),
+            camIndicator: document.getElementById('cam-indicator'),
+            camStatus: document.getElementById('cam-status-text'),
+            outputCanvas: document.getElementById('output_canvas')
+        };
+
+        document.getElementById('start-btn').addEventListener('click', function() {
+            this.innerHTML = '<span class="animate-pulse">Loading...</span>';
+            this.disabled = true;
+            document.getElementById('loading-text').style.display = 'block';
+
+            initFxCanvas();
+            initEnergyRing();
+            
+            bgm.volume = 0;
+            bgm.play().then(() => fadeInBgm(0.5)).catch(e => console.log("BGM Autoplay blocked"));
+
+            initAudio(); 
+            initCamera(); 
+            initThree(); 
+            
+            setTimeout(() => {
+                document.getElementById('start-overlay').style.display = 'none';
+                uiElements.cameraPreview.classList.remove('hidden-fade');
+            }, 1000);
+        });
+
+        function fadeInBgm(target) {
+            let vol = 0;
+            const t = setInterval(() => {
+                vol += 0.05;
+                if(vol >= target) { vol = target; clearInterval(t); }
+                bgm.volume = vol;
+            }, 200);
+        }
+
+        function initThree() {
+            const container = document.getElementById('canvas-container');
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x05030a, 0.002);
+
+            camera = new THREE.PerspectiveCamera(50, w / h, 1, 2000);
+            camera.position.z = 140;
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(w, h);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            container.appendChild(renderer.domElement);
+
+            createParticles();
+            ['3', '2', '1', 'cake'].forEach(getShapePoints);
+
+            window.addEventListener('resize', onWindowResize);
+            animate();
+        }
+
+        function createParticles() {
+            const geometry = new THREE.BufferGeometry();
+            const positions = new Float32Array(CONFIG.particleCount * 3);
+            const colors = new Float32Array(CONFIG.particleCount * 3);
+            const sizes = new Float32Array(CONFIG.particleCount);
+
+            particlesData = [];
+            
+            const palette = [
+                new THREE.Color(0xff69b4), 
+                new THREE.Color(0xff1493), 
+                new THREE.Color(0xda70d6), 
+                new THREE.Color(0xffffff)  
+            ];
+
+            for (let i = 0; i < CONFIG.particleCount; i++) {
+                const x = (Math.random() - 0.5) * 250;
+                const y = (Math.random() - 0.5) * 150;
+                const z = (Math.random() - 0.5) * 100;
+
+                positions[i*3] = x; positions[i*3+1] = y; positions[i*3+2] = z;
+                
+                const baseC = palette[Math.floor(Math.random() * palette.length)];
+                colors[i*3] = baseC.r; colors[i*3+1] = baseC.g; colors[i*3+2] = baseC.b;
+                
+                sizes[i] = 15.0 + Math.random() * 20.0;
+
+                particlesData.push({
+                    current: new THREE.Vector3(x, y, z),
+                    target: new THREE.Vector3(x, y, z),
+                    velocity: new THREE.Vector3(0,0,0),
+                    wanderOffset: Math.random() * 1000,
+                    baseColor: baseC,
+                    currentColor: baseC.clone(),
+                    targetColor: baseC.clone(),
+                    type: 'bg',
+                    sizeBase: sizes[i]
+                });
+            }
+
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+            geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+
+            // 核心修复：alpha * 0.15 (柔光护眼) + 柔和边缘
+            const material = new THREE.ShaderMaterial({
+                uniforms: {},
+                vertexShader: `
+                    attribute float size;
+                    varying vec3 vColor;
+                    void main() {
+                        vColor = color;
+                        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                        // 稍微调小一点尺寸系数，防止手机上太大
+                        gl_PointSize = size * (600.0 / -mvPosition.z);
+                        gl_Position = projectionMatrix * mvPosition;
+                    }
+                `,
+                fragmentShader: `
+                    varying vec3 vColor;
+                    void main() {
+                        vec2 uv = gl_PointCoord - vec2(0.5);
+                        float dist = length(uv);
+                        if (dist > 0.5) discard;
+                        
+                        // 边缘极其柔和
+                        float alpha = 1.0 - smoothstep(0.0, 0.5, dist);
+                        
+                        // 核心：大幅降低透明度，防止叠加过曝
+                        // 0.15 是关键参数
+                        gl_FragColor = vec4(vColor, alpha * 0.15); 
+                    }
+                `,
+                blending: THREE.AdditiveBlending,
+                depthTest: false, 
+                transparent: true,
+                vertexColors: true
+            });
+
+            particleSystem = new THREE.Points(geometry, material);
+            scene.add(particleSystem);
+        }
+
+        function updateParticles() {
+            const positions = particleSystem.geometry.attributes.position.array;
+            const colors = particleSystem.geometry.attributes.color.array;
+            const sizes = particleSystem.geometry.attributes.size.array;
+            
+            time += 0.015;
+            const blowForce = blowProgress / 100;
+
+            for (let i = 0; i < CONFIG.particleCount; i++) {
+                const p = particlesData[i];
+                
+                if (currentState === STATE.IDLE) {
+                    const noiseX = Math.sin(time * 0.5 + p.wanderOffset) * 20;
+                    const noiseY = Math.cos(time * 0.3 + p.wanderOffset) * 10;
+                    p.target.set(
+                        p.current.x + (noiseX - p.current.x) * 0.02,
+                        p.current.y + (noiseY - p.current.y) * 0.02,
+                        p.current.z
+                    );
+                    
+                    if (handDetected) {
+                        const dist = p.current.distanceTo(handPosition);
+                        if (dist < 50) {
+                            const attraction = new THREE.Vector3().subVectors(handPosition, p.current).normalize().multiplyScalar(0.5);
+                            p.velocity.add(attraction);
+                        }
+                    }
+                } else if (currentState === STATE.GATHERING) {
+                    const angle = p.wanderOffset + time * 5;
+                    const radius = 10 + Math.random() * 20;
+                    p.target.set(Math.cos(angle) * radius, Math.sin(angle) * radius, 0);
+                }
+
+                const force = new THREE.Vector3().subVectors(p.target, p.current);
+                const dist = force.length();
+                force.normalize().multiplyScalar(dist * CONFIG.physics.springStrength);
+                p.velocity.add(force);
+                
+                const wanderX = Math.sin(time * 2 + p.wanderOffset) * CONFIG.physics.wanderStrength;
+                const wanderY = Math.cos(time * 2 + p.wanderOffset) * CONFIG.physics.wanderStrength;
+                p.velocity.x += wanderX;
+                p.velocity.y += wanderY;
+
+                p.velocity.multiplyScalar(CONFIG.physics.friction);
+
+                if (p.type === 'flame') {
+                    p.velocity.y += 0.05; 
+                    p.velocity.x += (Math.random() - 0.5) * 0.1;
+                    
+                    if (blowForce > 0.1) {
+                        p.velocity.x += (Math.random() - 0.5) * blowForce * 2;
+                        p.velocity.y += Math.random() * blowForce * 2;
+                        p.velocity.z += (Math.random() - 0.5) * blowForce * 2;
+                    }
+                    if (currentState === STATE.CELEBRATION) {
+                        p.velocity.y += 0.5;
+                        p.velocity.x += (Math.random()-0.5) * 0.5;
+                        p.targetColor.setHex(0x333333);
+                    }
+                }
+
+                p.current.add(p.velocity);
+                
+                positions[i*3] = p.current.x;
+                positions[i*3+1] = p.current.y;
+                positions[i*3+2] = p.current.z;
+
+                p.currentColor.lerp(p.targetColor, 0.05);
+                colors[i*3] = p.currentColor.r;
+                colors[i*3+1] = p.currentColor.g;
+                colors[i*3+2] = p.currentColor.b;
+
+                if (currentState === STATE.IDLE) {
+                    sizes[i] = p.sizeBase * (0.9 + Math.sin(time * 2 + p.wanderOffset)*0.2); 
+                } else {
+                    sizes[i] = p.sizeBase;
+                }
+            }
+
+            particleSystem.geometry.attributes.position.needsUpdate = true;
+            particleSystem.geometry.attributes.color.needsUpdate = true;
+            particleSystem.geometry.attributes.size.needsUpdate = true;
+            
+            if (currentState >= STATE.CAKE) {
+                particleSystem.rotation.y = Math.sin(time * 0.1) * 0.1;
+            }
+        }
+
+        function getShapePoints(text) {
+            if (shapeCache[text]) return shapeCache[text];
+            const pts = [];
+            
+            if (text === 'cake') {
+                const layers = [
+                    {y: -20, r: 35, h: 15, color: 0xffa500},
+                    {y: -5, r: 25, h: 12, color: 0xff69b4},
+                ];
+                layers.forEach(l => {
+                    for(let i=0; i<800; i++) { // 进一步降低密度，防止过亮
+                        const th = Math.random()*Math.PI*2;
+                        const r = Math.random()*l.r;
+                        pts.push({
+                            vec: new THREE.Vector3(r*Math.cos(th), l.y + Math.random()*l.h, r*Math.sin(th)),
+                            type: 'cake', color: new THREE.Color(l.color)
+                        });
+                    }
+                });
+                for(let i=0; i<300; i++) {
+                    const th = Math.random()*Math.PI*2;
+                    const r = Math.random()*2;
+                    pts.push({
+                        vec: new THREE.Vector3(r*Math.cos(th), 10 + Math.random()*15, r*Math.sin(th)),
+                        type: 'candle', color: new THREE.Color(0xffffff)
+                    });
+                }
+                for(let i=0; i<400; i++) {
+                    const u = Math.random();
+                    pts.push({
+                        vec: new THREE.Vector3((Math.random()-0.5)*3, 28 + u*10, (Math.random()-0.5)*3),
+                        type: 'flame', color: new THREE.Color(0xff4500)
+                    });
+                }
+            } else {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                canvas.width = 200; canvas.height = 200;
+                ctx.font = 'bold 120px Arial';
+                ctx.fillStyle = 'white';
+                ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                ctx.fillText(text, 100, 100);
+                const data = ctx.getImageData(0,0,200,200).data;
+                for(let y=0; y<200; y+=4) { 
+                    for(let x=0; x<200; x+=4) {
+                        if(data[(y*200+x)*4+3] > 128) {
+                            pts.push({
+                                vec: new THREE.Vector3((x-100)*0.6, -(y-100)*0.6, 0),
+                                type: 'text', color: new THREE.Color(0xffffff)
+                            });
+                        }
+                    }
+                }
+            }
+            shapeCache[text] = pts;
+            return pts;
+        }
+
+        function transitionTo(shapeName) {
+            const targets = getShapePoints(shapeName);
+            particlesData.forEach((p, i) => {
+                p.type = 'bg'; 
+                if (i < targets.length) {
+                    const t = targets[i];
+                    p.target.copy(t.vec);
+                    if (shapeName !== 'cake') p.target.multiplyScalar(2.5); 
+                    
+                    if (t.type) p.type = t.type;
+                    if (t.color) p.targetColor = t.color;
+                    else p.targetColor = new THREE.Color(0xffb6c1); 
+                    
+                    p.velocity.add(new THREE.Vector3(Math.random()-0.5, Math.random()-0.5, Math.random()-0.5).multiplyScalar(2));
+                } else {
+                    const th = Math.random()*Math.PI*2;
+                    const r = 80 + Math.random()*60;
+                    p.target.set(Math.cos(th)*r, (Math.random()-0.5)*100, Math.sin(th)*r);
+                    p.targetColor.setHSL(Math.random(), 0.5, 0.1); 
+                }
+            });
+        }
+
+        function startSequence() {
+            if (currentState !== STATE.IDLE) return;
+            
+            uiElements.cameraPreview.classList.add('hidden-fade');
+
+            currentState = STATE.GATHERING;
+            uiElements.statusText.innerText = "GATHERING ENERGY...";
+            uiElements.statusText.className = "text-xs md:text-sm text-yellow-400 font-bold tracking-wider";
+            uiElements.statusDot.className = "inline-block w-2 h-2 rounded-full bg-yellow-500 mr-2 animate-ping";
+            
+            setTimeout(() => {
+                currentState = STATE.COUNTDOWN;
+                uiElements.statusText.innerText = "COUNTDOWN";
+                uiElements.statusDot.className = "inline-block w-2 h-2 rounded-full bg-green-500 mr-2 shadow-[0_0_8px_#0f0]";
+                
+                let count = 3;
+                uiElements.mainText.innerText = count;
+                transitionTo('3');
+
+                const timer = setInterval(() => {
+                    count--;
+                    if (count > 0) {
+                        uiElements.mainText.innerText = count;
+                        transitionTo(String(count));
+                    } else {
+                        clearInterval(timer);
+                        showCake();
+                    }
+                }, 1300);
+            }, 1200);
+        }
+
+        function showCake() {
+            currentState = STATE.BLOWING;
+            transitionTo('cake');
+            
+            uiElements.mainText.innerText = "Happy Birthday";
+            uiElements.mainText.className = "text-5xl md:text-8xl text-pink-200 font-handwriting text-glow pop-in";
+            uiElements.subText.innerText = "";
+            uiElements.statusText.innerText = "MIC LISTENING...";
+            
+            uiElements.blowMeter.style.opacity = '1';
+            uiElements.blowHint.style.opacity = '1';
+            
+            setupTouchBlowFallback();
+        }
+
+        function successCelebration() {
+            if (currentState === STATE.CELEBRATION) return;
+            currentState = STATE.CELEBRATION;
+            
+            uiElements.statusText.innerText = "WISH GRANTED";
+            uiElements.blowMeter.style.opacity = '0';
+            uiElements.blowHint.style.opacity = '0';
+            
+            particlesData.forEach(p => {
+                if (p.type !== 'cake' && p.type !== 'candle') {
+                    p.target.multiplyScalar(3);
+                    p.velocity.add(new THREE.Vector3(Math.random()-0.5, 1, Math.random()-0.5).multiplyScalar(5));
+                }
+            });
+
+            setTimeout(() => {
+                uiElements.surpriseLayer.classList.add('active');
+                uiElements.card1.classList.remove('hidden');
+            }, 1500);
+        }
+
+        function setupTouchBlowFallback() {
+            const tick = () => {
+                if (currentState !== STATE.BLOWING) return;
+                blowProgress = Math.min(100, blowProgress + 1.5); 
+                uiElements.blowBar.style.width = blowProgress + '%';
+                
+                particlesData.forEach(p => {
+                    if (p.type === 'flame') {
+                        p.velocity.add(new THREE.Vector3((Math.random()-0.5)*2, 1, (Math.random()-0.5)*2));
+                    }
+                });
+
+                if (blowProgress >= 100) successCelebration();
+            };
+
+            const startHandler = (e) => {
+                if (currentState !== STATE.BLOWING) return;
+                if (touchBlowInterval) clearInterval(touchBlowInterval);
+                tick(); 
+                touchBlowInterval = setInterval(tick, 50); 
+            };
+            
+            const endHandler = () => {
+                if (touchBlowInterval) {
+                    clearInterval(touchBlowInterval);
+                    touchBlowInterval = null;
+                }
+            };
+
+            document.addEventListener('mousedown', startHandler);
+            document.addEventListener('touchstart', startHandler, {passive: false});
+            document.addEventListener('mouseup', endHandler);
+            document.addEventListener('touchend', endHandler);
+        }
+
+        function initAudio() {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+            navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 256;
+                const source = audioContext.createMediaStreamSource(stream);
+                source.connect(analyser);
+                checkAudio();
+            }).catch(e => console.log("Mic denied"));
+        }
+
+        function checkAudio() {
+            requestAnimationFrame(checkAudio);
+            if (currentState !== STATE.BLOWING || !analyser) return;
+            const data = new Uint8Array(analyser.frequencyBinCount);
+            analyser.getByteFrequencyData(data);
+            let sum = 0; 
+            for(let i=0; i<data.length; i++) sum += data[i];
+            const avg = sum / data.length;
+            
+            if (avg > CONFIG.blowThreshold) {
+                blowProgress += 0.8;
+            } else {
+                blowProgress -= 0.2;
+            }
+            blowProgress = Math.max(0, Math.min(100, blowProgress));
+            uiElements.blowBar.style.width = blowProgress + '%';
+            if (blowProgress >= 100) successCelebration();
+        }
+
+        function initFxCanvas() {
+            fxCtx = uiElements.fxCanvas.getContext('2d');
+            const resize = () => {
+                uiElements.fxCanvas.width = window.innerWidth;
+                uiElements.fxCanvas.height = window.innerHeight;
+                fxWidth = window.innerWidth; fxHeight = window.innerHeight;
+            };
+            window.addEventListener('resize', resize);
+            resize();
+            updateFxCanvas();
+        }
+
+        function updateFxCanvas() {
+            requestAnimationFrame(updateFxCanvas);
+            if(!fxCtx) return;
+            fxCtx.clearRect(0,0,fxWidth, fxHeight);
+            
+            if(magicCircle.active && magicCircle.x) {
+                magicCircle.angle += 0.05;
+                fxCtx.save();
+                fxCtx.translate(magicCircle.x, magicCircle.y);
+                fxCtx.rotate(magicCircle.angle);
+                fxCtx.strokeStyle = `rgba(255, 105, 180, 0.5)`;
+                fxCtx.lineWidth = 2;
+                fxCtx.beginPath(); fxCtx.arc(0,0,60,0,Math.PI*2); fxCtx.stroke();
+                for(let i=0; i<3; i++) {
+                    fxCtx.rotate(Math.PI/3);
+                    fxCtx.strokeRect(-30,-30,60,60);
+                }
+                fxCtx.restore();
+            }
+        }
+
+        function initEnergyRing() {
+            uiElements.energyRingFg.style.strokeDasharray = ENERGY_CIRCUMFERENCE;
+            uiElements.energyRingFg.style.strokeDashoffset = ENERGY_CIRCUMFERENCE;
+        }
+        function updateEnergyRing(p) {
+            uiElements.energyRing.classList.add('active');
+            uiElements.energyRingFg.style.strokeDashoffset = ENERGY_CIRCUMFERENCE * (1 - p);
+        }
+        function deactivateEnergyRing() {
+            uiElements.energyRing.classList.remove('active');
+        }
+
+        function initCamera() {
+            if (typeof Camera === 'undefined') {
+                alert("组件未加载完成，请刷新页面重试。或者直接使用触控模式。");
+                uiElements.camStatus.innerText = "LIB ERROR";
+                return;
+            }
+
+            const video = document.getElementsByClassName('input_video')[0];
+            
+            const hands = new Hands({
+                locateFile: (file) => {
+                    return `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/${file}`;
+                }
+            });
+
+            hands.setOptions({
+                maxNumHands: 1,
+                modelComplexity: 0, 
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
+            });
+            
+            uiElements.outputCanvas.width = 320;
+            uiElements.outputCanvas.height = 240;
+            const previewCtx = uiElements.outputCanvas.getContext('2d');
+
+            hands.onResults(results => {
+                previewCtx.save();
+                previewCtx.clearRect(0, 0, 320, 240);
+                previewCtx.drawImage(results.image, 0, 0, 320, 240);
+                
+                if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                    handDetected = true;
+                    uiElements.camIndicator.classList.replace('bg-red-500', 'bg-emerald-400');
+                    uiElements.camIndicator.classList.add('shadow-[0_0_8px_#34d399]');
+                    uiElements.camStatus.innerText = "DETECTED";
+                    uiElements.camStatus.className = "text-[9px] text-emerald-400 font-bold";
+
+                    const hand = results.multiHandLandmarks[0];
+                    const palm = hand[9];
+                    handPosition.set((0.5-palm.x)*200, (0.5-palm.y)*120, 0);
+                    
+                    magicCircle.x = palm.x * window.innerWidth;
+                    magicCircle.y = palm.y * window.innerHeight;
+                    magicCircle.active = true;
+
+                    drawConnectors(previewCtx, hand, HAND_CONNECTIONS, {color: '#34d399', lineWidth: 3});
+                    drawLandmarks(previewCtx, hand, {color: '#ffffff', lineWidth: 1, radius: 2});
+
+                    if (currentState === STATE.IDLE) {
+                        if (!handHoldStart) handHoldStart = Date.now();
+                        const p = Math.min(1, (Date.now() - handHoldStart) / 1000);
+                        updateEnergyRing(p);
+                        if (p >= 1) {
+                            startSequence();
+                            deactivateEnergyRing();
+                        }
+                    }
+                } else {
+                    handDetected = false;
+                    magicCircle.active = false;
+                    handHoldStart = null;
+                    deactivateEnergyRing();
+                    
+                    uiElements.camIndicator.classList.replace('bg-emerald-400', 'bg-red-500');
+                    uiElements.camIndicator.classList.remove('shadow-[0_0_8px_#34d399]');
+                    uiElements.camStatus.innerText = "WAITING...";
+                    uiElements.camStatus.className = "text-[9px] text-slate-400";
+                }
+                previewCtx.restore();
+            });
+
+            const camera = new Camera(video, {
+                onFrame: async () => {
+                    try {
+                        await hands.send({image: video});
+                    } catch (e) {
+                        console.error("Hands send error:", e);
+                    }
+                },
+                width: 320, 
+                height: 240
+            });
+
+            camera.start()
+                .then(() => console.log("Camera started"))
+                .catch(err => {
+                    console.error("Camera failed:", err);
+                    uiElements.camStatus.innerText = "ERROR";
+                    uiElements.cameraPreview.style.display = 'none'; 
+                    alert("无法启动摄像头，已自动切换为触控模式。请点击屏幕任意位置开始。");
+                });
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+        function animate() {
+            requestAnimationFrame(animate);
+            updateParticles();
+            renderer.render(scene, camera);
+        }
+
+        uiElements.revealBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            uiElements.revealBtn.classList.add('hidden');
+            uiElements.card1.classList.remove('hidden');
+        });
+        uiElements.nextBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            uiElements.card1.classList.add('hidden');
+            uiElements.card2.classList.remove('hidden');
+            let i=0; uiElements.blessingText.innerHTML = '';
+            const t = setInterval(() => {
+                uiElements.blessingText.innerText += blessingContent[i++];
+                if(i>=blessingContent.length) clearInterval(t);
+            }, 100);
+        });
+        uiElements.closeBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            uiElements.card2.classList.add('hidden');
+            uiElements.revealBtn.classList.remove('hidden');
+        });
+        uiElements.wishCard3d.addEventListener('click', function(e) {
+            e.stopPropagation();
+            this.classList.toggle('flipped');
+        });
+
+    </script>
+</body>
+</html>
